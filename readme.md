@@ -1,0 +1,1 @@
+Apple devices gather a large amount of data on your daily activities. The code here illustrates how to gather, clean, analyze and visualize this data 

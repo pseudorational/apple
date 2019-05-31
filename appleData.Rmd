@@ -1,0 +1,345 @@
+---
+title: "Apple Data"
+author: "Vishal Lala"
+date: "May 22, 2019"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: true
+    df_print: paged
+  tufte::tufte_handout: default
+  ioslides_presentation: default
+  html_vignette: default
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    highlight: haddock
+  html_document: 
+    toc: true
+    toc_depth: 2
+    toc_float: false
+    theme: cerulean
+    highlight: haddock
+    df_print: paged
+  beamer_presentation: default
+---
+
+# Getting your data  
+* In your iPhone, open the Health App  
+* Click on your profile in the top right hand corner  
+* On the next screen, click Export Health Data  
+* Email the data to yourself. If the file is too large, use the maildrop option which will send you a link for an icloud location.  
+* Download the data on your computer.  
+* Extract XML file from the zip file
+
+# Read Data  
+The data comes in an XML format which is not human-readable. The first few lines contain meta-data. Here are the first four lines. Actual data only begins after about 100 lines.
+```{r message = F, warning=F}
+readLines(con = 'C:/Users/vlala/Downloads/export/apple_health_export/export.xml',n = 4)
+```
+
+Use the XML package to transform the XML file into a familiar dataframe
+```{r message = F, warning=F}
+library(XML)
+data = xmlParse('file:///C:/Users/vlala/Downloads/export/apple_health_export/export.xml')
+#xmlAttrsToDataFrame(xml["//Record"])
+df =  XML:::xmlAttrsToDataFrame(data["//Record"])
+```
+
+Depending on the number of length of time and number of devices, the file can be pretty large. 
+```{r message = F, warning=F}
+format(object.size(df),units = 'MB')
+```
+
+```{r message = F, warning=F}
+class(df$value)
+```
+
+# Prepare the data  
+* value contains all the numerical data but it comes in as a factor class. Change this to numeric
+* All dates are also read in as factor. Use library(lubridate) to convert them to date-time objects
+* Extract elements of date and time from the endDate. The choice of endDate is arbitrary. Turns out, it doesn't matter much whether one chooses startDate, endDate or creationDate as the values are almost the same. 
+* Change the default order for days of week from Sun-Sat, to Mon-Sun. This is really a personal choice.   
+* Simplify labels for levels of categorical variables. (a) Remove the long leading phrase in type labels: HKCategoryTypeIdentifier and HKQuantityTypeIdentifier. (b) Simplify source name
+
+```{r message = F, warning=F}
+library(lubridate)
+df$value = as.numeric(as.character(df$value))
+df$endDate = ymd_hms(df$endDate,tz='America/New_York')
+df$startDate = ymd_hms(df$startDate,tz='America/New_York')
+df$creationDate = ymd_hms(df$creationDate,tz='America/New_York')
+
+df$date = date(df$endDate)
+df$year = year(df$endDate)
+df$month = month(df$endDate)
+df$month_label = month(df$endDate,label = T,abbr = T)
+df$day_of_month = day(df$endDate)
+df$day_of_week = wday(df$endDate,label = T,abbr = T)
+df$hour = hour(df$endDate)
+df$minute = minute(df$endDate)
+df$second = second(df$endDate)
+
+df$day_of_week = factor(df$day_of_week,levels = c('Mon','Tue','Wed','Thu','Fri','Sat','Sun'),ordered = T)
+
+
+levels(df$type) = unlist(lapply(X = levels(df$type), 
+                                FUN = function(x)gsub(pattern = 'HKQuantityTypeIdentifier',replacement ='',x = x)))
+
+levels(df$type) = unlist(lapply(X = levels(df$type), 
+                                FUN = function(x)gsub(pattern = 'HKCategoryTypeIdentifier',replacement ='Category_',x = x)))
+
+levels(df$sourceName) = c('health','phone','watch')
+```
+
+
+# Analyze
+
+Examine the trend for steps and distance traveled by days of the week. Is there a weekend swoon? Shouldn't Mondays be energetic? 
+
+## Steps (by day of week)
+Examine steps by day of week
+```{r message = F, warning=F}
+library(ggplot2); library(dplyr); library(tidyr)
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(day_of_week)%>%
+  summarize(avg_steps = mean(dailyValue))
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(day_of_week)%>%
+  summarize(daily_steps = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_steps, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')
+```
+
+Breaking out trend by year and then month. 
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(year, day_of_week)%>%
+  summarize(daily_steps = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_steps, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  facet_wrap(~year)
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(month_label, day_of_week)%>%
+  summarize(daily_steps = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_steps, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  facet_wrap(~month_label)
+```
+
+## Distance Covered (by day of week)
+Examine distance covered by day of week
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(day_of_week)%>%
+  summarize(avg_distance = mean(dailyValue))
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(day_of_week)%>%
+  summarize(daily_distance = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_distance, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')
+```
+Breaking out trend by year and then month. 
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(year, day_of_week)%>%
+  summarize(daily_distance = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_distance, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  facet_wrap(~year)
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type, date, year, month, month_label, day_of_month,day_of_week)%>%
+  summarize(dailyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(month_label, day_of_week)%>%
+  summarize(daily_distance = mean(dailyValue))%>%
+  ggplot(aes(x= day_of_week, y=daily_distance, group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  facet_wrap(~month_label)
+```
+
+
+
+
+
+
+## Steps (by hours of the day)
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(hour)%>%
+  summarize(steps = mean(hourlyValue))
+```
+
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(hour)%>%
+  summarize(steps = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=steps,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')
+```
+
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(year, hour)%>%
+  summarize(steps = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=steps,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')+
+  facet_wrap(~year)
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='StepCount')%>%
+  group_by(month_label, hour)%>%
+  summarize(steps = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=steps,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')+
+  facet_wrap(~month_label)
+```
+
+
+## Distance covered (by hours of the day)
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(hour)%>%
+  summarize(dist = mean(hourlyValue))
+```
+
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(hour)%>%
+  summarize(dist = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=dist,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')
+```
+
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(year, hour)%>%
+  summarize(dist = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=dist,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')+
+  facet_wrap(~year)
+```
+
+```{r message = F, warning=F}
+df%>%
+  filter(sourceName=='phone')%>%
+  group_by(type,date,year, month, month_label, day_of_month, day_of_week, hour)%>%
+  summarize(hourlyValue = sum(value))%>%
+  ungroup()%>%
+  filter(type=='DistanceWalkingRunning')%>%
+  group_by(month_label, hour)%>%
+  summarize(dist = mean(hourlyValue))%>%
+  ggplot(aes(x=hour,y=dist,group=1))+
+  geom_point()+
+  geom_line(size=1.1,color='tomato')+
+  scale_x_continuous(breaks = c(0,4,8,12,16,20),labels = c('12am','4am','8am','noon','4pm','8pm'))+xlab('')+
+  facet_wrap(~month_label)
+```
+
+
+
